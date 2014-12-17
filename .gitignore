@@ -1,0 +1,14 @@
+.idea/
+desktop/target
+.nrepl-port
+.lein-repl-history
+*.iml
+*.swp
+target/
+*.save.*
+
+desktop/src-common/rouje_like/test.clj
+
+desktop/.lein-failures
+
+desktop/NUL

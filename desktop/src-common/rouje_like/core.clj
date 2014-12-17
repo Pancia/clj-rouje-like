@@ -1,6 +1,6 @@
 (ns rouje-like.core
-  (:import [com.badlogic.gdx.scenes.scene2d.ui Label]
-           [com.badlogic.gdx.graphics.g2d TextureRegion])
+  (:import [com.badlogic.gdx.scenes.scene2d.ui Label TextField$TextFieldListener]
+           [com.badlogic.gdx.graphics.g2d TextureRegion SpriteBatch])
 
   (:require [play-clj.core :refer :all]
             [play-clj.core :as play]
@@ -10,97 +10,50 @@
             [brute.entity :as br.e]
             [brute.system :as br.s]
 
-            [rouje-like.components :as rj.c]
+            [clojure.string :as s]
+
             [rouje-like.destructible :as rj.d]
             [rouje-like.entity-wrapper :as rj.e]
             [rouje-like.rendering :as rj.r]
-            [rouje-like.mobile :as rj.m]
-            [rouje-like.bat :as rj.bt]
             [rouje-like.input :as rj.in]
-            [rouje-like.lichen :as rj.lc]
+            [rouje-like.utils :as rj.u :refer [?]]
             [rouje-like.player :as rj.pl]
             [rouje-like.world :as rj.wr]
-            [rouje-like.attacker :as rj.atk]
-            [rouje-like.skeleton :as rj.sk]
-            [rouje-like.items :as rj.items]))
+            [rouje-like.config :as rj.cfg]
+            [rouje-like.messaging :as rj.msg]))
 
-(declare main-screen rouje-like)
+#_(in-ns 'rouje-like.core)
+#_(use 'rouje-like.core :reload)
+#_(on-gl (set-screen! rouje-like game-screen))
+
+(declare game-screen main-menu-screen rouje-like)
 
 (def ^:private sys (atom {}))
-
-(def ^:private init-wall% 45)
-(def ^:private init-torch% 2)
-(def ^:private init-gold% 5)
-(def ^:private init-lichen% 1)
-(def ^:private init-bat% 1)
-(def ^:private init-skeleton% 1)
+(def ^:private user (atom {}))
 
 (defn init-entities
-  [system]
-  (let [e-world  (br.e/create-entity)]
-    (-> system
-        (rj.pl/init-player)
-
-        (rj.e/add-e e-world)
-        (rj.e/add-c e-world (rj.c/map->World {:world (rj.wr/generate-random-world
-                                                       rj.c/world-sizes init-wall%)}))
-        (rj.e/add-c e-world (rj.c/map->Renderable {:render-fn rj.wr/render-world
-                                                   :args      {:view-port-sizes rj.c/view-port-sizes}}))
-
-        ;; Add Items: Gold, Torches...
-        (as-> system
-              (nth (iterate rj.items/add-gold system)
-                   (* (/ init-gold% 100)
-                      (apply * (vals rj.c/world-sizes)))))
-
-        (as-> system
-              (nth (iterate rj.items/add-torch system)
-                   (* (/ init-torch% 100)
-                      (apply * (vals rj.c/world-sizes)))))
-
-        ;; Spawn lichens
-        (as-> system
-              (nth (iterate rj.lc/add-lichen system)
-                   (* (/ init-lichen% 100)
-                      (apply * (vals rj.c/world-sizes)))))
-
-        ;; Spawn bats
-        (as-> system
-              (nth (iterate rj.bt/add-bat system)
-                   (* (/ init-bat% 100)
-                      (apply * (vals rj.c/world-sizes)))))
-
-        ;; Spawn Skeletons
-        (as-> system
-              (nth (iterate rj.sk/add-skeleton system)
-                   (* (/ init-bat% 100)
-                      (apply * (vals rj.c/world-sizes)))))
-
-        ;; Add player
-        (as-> system
-              (let [e-player (first (rj.e/all-e-with-c system :player))]
-                (rj.wr/update-in-world system e-world rj.pl/init-player-pos
-                                       (fn [entities]
-                                         (vec (conj (filter #(#{:floor} (:type %)) entities)
-                                                    (rj.c/map->Entity {:id   e-player
-                                                                       :type :player}))))))))))
+  [system user]
+  (-> system
+      (rj.pl/init-player user)
+      (rj.msg/init-relay)
+      (rj.wr/init-world)
+      (rj.pl/add-player)))
 
 (defn register-system-fns
   [system]
   (-> system
-      (br.s/add-system-fn  rj.r/process-one-game-tick)))
+      (br.s/add-system-fn rj.r/process-one-game-tick)))
 
-(defscreen main-screen
+(defscreen game-screen
   :on-show
   (fn [screen _]
     (update! screen :renderer (stage) :camera (orthographic))
     (graphics! :set-continuous-rendering false)
-    (-> (br.e/create-system)
-        (init-entities)
-        (register-system-fns)
-        (as-> system
-              (reset! sys system))))
-  
+    (as-> (br.e/create-system) system
+      (init-entities system @user)
+      (register-system-fns system)
+      (reset! sys system)))
+
   :on-render
   (fn [screen _]
     (clear!)
@@ -115,24 +68,112 @@
       (reset! sys
               (if (= key-code (play/key-code :f5))
                 (-> (br.e/create-system)
-                    (init-entities)
+                    (init-entities @user)
                     (register-system-fns))
-                (-> (rj.in/process-keyboard-input! @sys key-code)
-                    (as-> system
-                          (if (empty? (rj.e/all-e-with-c system :player))
-                            (-> (br.e/create-system)
-                                (init-entities)
-                                (register-system-fns))
-                            system)))))))
+                (as-> (rj.in/process-keyboard-input @sys key-code) system
+                  (if (empty? (rj.e/all-e-with-c system :player))
+                    (-> (br.e/create-system)
+                        (init-entities @user)
+                        (register-system-fns))
+                    system))))))
 
   :on-fling
   (fn [screen _]
     (let [x-vel (:velocity-x screen)
           y-vel (:velocity-y screen)]
       (reset! sys
-              (rj.in/process-fling-input! @sys x-vel y-vel)))))
+              (rj.in/process-fling-input @sys x-vel y-vel)))))
+
+(defn cmds->action
+  [cmds]
+  (let [cmd->action {"name"  (fn [n]
+                               (swap! user #(assoc % :n n)))
+                     "race"  (fn [r]
+                               (swap! user #(assoc % :r r)))
+                     "class" (fn [c]
+                               (swap! user #(assoc % :c c)))
+                     "start" (fn [_]
+                               (? "STARTING GAME")
+                               (set-screen! rouje-like game-screen)
+                               (? "GAME LOADED"))}
+        cmd&arg (first (partition 2 (s/split cmds #" ")))
+        action (cmd->action (first cmd&arg))
+        arg (second cmd&arg)]
+    (if action
+      (action arg)
+      nil)))
+
+(def cmdl (atom ""))
+(def keycode->cmdl-action
+  (let [k->cmdl-fn (fn [k] (fn [] (swap! cmdl str (name k))))
+        key-codes (range 29 55) ;[a-z]
+        alphabet [:a :b :c :d :e :f :g :h :i :j :k :l :m
+                  :n :o :p :q :r :s :t :u :v :w :x :y :z]]
+    (merge {(play/key-code :escape)    (fn []
+                                         (reset! cmdl ""))
+            (play/key-code :backspace) (fn []
+                                         (swap! cmdl #(apply str (drop-last 1 %))))
+            (play/key-code :enter)     (fn []
+                                         (let [cmds @cmdl]
+                                           (reset! cmdl "")
+                                           (cmds->action cmds)))
+            (play/key-code :space)     (fn [] (swap! cmdl str " "))}
+           (zipmap key-codes (map k->cmdl-fn alphabet)))))
+
+(defscreen main-menu-screen
+  :on-show
+  (fn [screen _]
+    (update! screen :renderer (stage))
+    (let [height (graphics! :get-height)
+          width (graphics! :get-height)
+          starting-x (+ -25 (* width 1/4))
+          starting-y (* height 4/7)]
+      (vector
+        (label (str "Welcome to Dunjeon Crawler\n"
+                    "type \"name <name>\" \"race <race>\" \"class <class>\"\n"
+                    "and \"start game\" to begin!")
+               (color :green)
+               :set-x (float starting-x)
+               :set-y (float (+ 50 starting-y))
+               :set-width (float (* width 1/2))
+               :set-wrap true)
+        (assoc (label "" (color :green)
+                      :set-x (float starting-x)
+                      :set-y (float (+ 25 starting-y)))
+               :id :user)
+        (assoc (label "" (color :green)
+                      :set-x (float starting-x)
+                      :set-y (float (+ 0 starting-y)))
+               :id :cmdl))))
+
+  :on-render
+  (fn [screen entities]
+    (clear!)
+    (->> (for [entity entities]
+           (case (:id entity)
+             :cmdl (doto entity
+                     (label! :set-text (str ">? " @cmdl)))
+             :user (doto entity
+                     (label! :set-text (str @user)))
+             entity))
+         (render! screen)))
+
+  :on-key-down
+  (fn [screen entities]
+    (let [key-code (:key screen)
+          cmdl-action (keycode->cmdl-action key-code)]
+      (when cmdl-action
+        (cmdl-action)))
+    entities))
+
+(set-screen-wrapper! (fn [screen screen-fn]
+                       (try (screen-fn)
+                            (catch Exception e
+                              (.printStackTrace e)
+                              (reset! sys {})
+                              (set-screen! rouje-like screen)))))
 
 (defgame rouje-like
   :on-create
   (fn [this]
-    (set-screen! this main-screen)))
+    (set-screen! this main-menu-screen)))
