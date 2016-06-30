@@ -9,7 +9,7 @@
                                                     ->3DPoint]]
             [rouje-like.rendering :as rj.r]
             [rouje-like.entity-wrapper :as rj.e]
-            [rouje-like.utils :as rj.u :refer [?]]
+            [rouje-like.utils :as rj.u :refer [? as-?>]]
             [rouje-like.destructible :as rj.d]
             [rouje-like.status-effects :as rj.stef]
             [rouje-like.attacker :as rj.atk]
@@ -52,21 +52,22 @@
                                             direction))
         target-tile (get-in world target-coords nil)]
     (if (and (not (nil? target-tile)))
-      (as-> (let [c-mobile   (rj.e/get-c-on-e system e-this :mobile)
-                  c-digger   (rj.e/get-c-on-e system e-this :digger)
-                  c-attacker (rj.e/get-c-on-e system e-this :attacker)
-                  e-target (:id (rj.u/tile->top-entity target-tile))]
-              (cond
-                (can-move? c-mobile e-this target-tile system)
-                (move c-mobile e-this target-tile system)
+      (as-?> system
+        (let [c-mobile   (rj.e/get-c-on-e system e-this :mobile)
+              c-digger   (rj.e/get-c-on-e system e-this :digger)
+              c-attacker (rj.e/get-c-on-e system e-this :attacker)
+              e-target (:id (rj.u/tile->top-entity target-tile))]
+          (cond
+            (can-move? c-mobile e-this target-tile system)
+            (move c-mobile e-this target-tile system)
 
-                ((:can-dig?-fn c-digger) system e-this target-tile)
-                ((:dig-fn c-digger) system e-this target-tile)
+            ((:can-dig?-fn c-digger) system e-this target-tile)
+            ((:dig-fn c-digger) system e-this target-tile)
 
-                (can-attack? c-attacker e-this e-target system)
-                (attack c-attacker e-this e-target system)
+            (can-attack? c-attacker e-this e-target system)
+            (attack c-attacker e-this e-target system)
 
-                :else system)) system
+            :else system))
         (rj.d/apply-effects system e-this)
         (rj.e/upd-c system e-this :playersight
                     (fn [c-playersight]
@@ -76,11 +77,10 @@
 
               item (first (filter #(rj.e/get-c-on-e system (:id %) :item)
                                   (:entities this-tile)))]
-          (if item
+          (when item
             (let [e-item (:id item)
                   c-item (rj.e/get-c-on-e system e-item :item)]
-              ((:pickup-fn c-item) system e-this e-item this-pos (:type item)))
-            system))
+              ((:pickup-fn c-item) system e-this e-item this-pos (:type item)))))
         (rj.e/upd-c system e-this :energy
                     (fn [c-energy]
                       (update-in c-energy [:energy] dec))))
@@ -94,7 +94,6 @@
         {:keys [distance decline-rate
                 lower-bound upper-bound
                 torch-multiplier]} rj.cfg/player-sight
-        _ (? torch-multiplier)
 
         valid-class? (into #{} (keys rj.cfg/class->stats))
         player-class (if (valid-class? (keyword c))
@@ -139,8 +138,9 @@
                     :armor nil}]
        [:inventory {:slot nil :junk []
                     :hp-potion 0 :mp-potion 0}]
-       [:energy {:energy 1}]
-       [:mobile {:can-move?-fn rj.m/can-move?
+       [:energy {:energy 1
+                 :default-energy 1}]
+       [:mobile {:can-move?-fn rj.m/-can-move?
                  :move-fn      rj.m/move}]
        [:digger {:can-dig?-fn can-dig?
                  :dig-fn      dig}]
@@ -177,6 +177,6 @@
         e-world (first (rj.e/all-e-with-c system :world))]
     (rj.u/update-in-world system e-world rj.cfg/player-init-pos
                           (fn [entities]
-                            (vec (conj (filter #(rj.cfg/<floors> (:type %)) entities)
+                            (vec (conj (filter #(rj.cfg/<indestructibles> (:type %)) entities)
                                        (rj.c/map->Entity {:id   e-player
                                                           :type :player})))))))

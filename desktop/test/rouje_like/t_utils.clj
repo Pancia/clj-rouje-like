@@ -20,9 +20,9 @@
 (fact "tile->top-entity"
       (let [entities [(rj.c/map->Entity {:type :player})
                       (rj.c/map->Entity {:type :floor})]
-            tile (rj.c/map->Tile {:entities entities})]
-        (tile->top-entity tile)) => {:id nil,
-                                     :type :player})
+            tile (rj.c/map->Tile {:entities entities
+                                  :x 1 :y 2 :z 3})]
+        (tile->top-entity tile)) => (contains {:type :player}))
 
 (fact "points->line"
       (points->line [0 0] [3 5]) => [[0 0] [0 1]
@@ -35,7 +35,7 @@
       (can-see? level+wall 3 [0 0] [1 2]) => false)
 
 (fact "coords+offset"
-      (coords+offset [0 0] [1 3]) => [1 3]
+      (coords+offset [0 0]  [1 3]) => [1 3]
       (coords+offset [-1 3] [4 -2]) => [3 1])
 
 (fact "get-neighbors-coords"
@@ -50,11 +50,9 @@
                  (contains {:x 0 :y 1 :z 1})]))
 
 (fact "get-neighbors-of-type"
-      (map :entities
-           (get-neighbors-of-type level+wall [0 0] [:wall]))
-      => (contains
-           (contains {:id nil
-                      :type :wall})))
+      (first (filter #(#{:wall} (:type %))
+                     (:entities (first (get-neighbors-of-type level+wall [0 0] [:wall])))))
+      => (contains {:type :wall}))
 
 (fact "radial-distance"
       (radial-distance [0 0] [2 2]) => 2
@@ -69,12 +67,11 @@
                 (contains {:x 1 :y 1})]))
 
 (fact "get-neighbors-of-type-within"
-      (:entities
-        (first
-          (get-neighbors-of-type-within level+wall [0 0]
-                                        [:wall] #(<= % 1))))
-      => (contains {:type :wall
-                    :id nil}))
+      (first
+        (filter #(#{:wall} (:type %))
+                (:entities (first (get-neighbors-of-type-within level+wall [0 0]
+                                                                [:wall] #(<= % 1))))))
+      => (contains {:type :wall}))
 
 (fact "not-any-radially-of-type"
       (not-any-radially-of-type level [0 0]
@@ -82,27 +79,26 @@
       => true)
 
 (fact "ring-coords"
-      (ring-coords [0 0] 3) => (just
-                                 [-3 -3] [-3 -2] [-3 -1] [-3 0]
-                                 [-3 1]  [-3 2]  [-3 3]  [-2 -3]
-                                 [-2 3]  [-1 -3] [-1 3]  [0 -3]
-                                 [0 3]   [1 -3]  [1 3]   [2 -3]
-                                 [2 3]   [3 -3]  [3 -2]  [3 -1]
-                                 [3 0]   [3 1]   [3 2]   [3 3]))
+      (ring-coords [0 0] 3)
+      => (just
+           (for [i (range -3 4)
+                 j (range -3 4)
+                 :when (or (#{3 -3} i)
+                           (#{3 -3} j))]
+             [i j])))
 
 (fact "get-ring-around"
       (get-ring-around level [0 0] 2)
       => (every-checker
            #(= 16 (count %))
-           #(= 5 (count
-                   (filter (fn [tile]
-                             (= :dune (:type (tile->top-entity tile))))
-                           %)))))
+           #(= 5 (->> %
+                     (map (comp :type tile->top-entity))
+                     (filter (fn [type] (= :dune type)))
+                     count))))
 
 (fact "rand-rng"
       (* 1/10000 (apply + (take 10000 (repeatedly #(rand-rng 1 10)))))
       => (roughly 5 1))
-
 
 (fact "update-in-world"
       (let [system (start)
@@ -110,8 +106,9 @@
             e-player (first (rj.e/all-e-with-c system :player))
             system (update-in-world system e-world [1 3 3];[z x y]
                                     (fn [es]
-                                      [(rj.c/map->Entity
+                                      [(rj.c/strict-map->Entity
                                          {:id nil
+                                          :extra nil
                                           :type :fact})]))
             c-world (rj.e/get-c-on-e system e-world :world)
             levels (:levels c-world)]
@@ -134,3 +131,41 @@
                   (seq
                     (filter #(= :reyalp (:type %))
                             entities)))))
+
+(def number 42)
+(def pie 3.14)
+
+(fact "as-?> expands correctly"
+      (as-?> number
+           (+ 2 number)
+           (/ number 2)
+           nil)
+      =expands-to=>
+      (clojure.core/let [rj-utils-temp (+ 2 number)
+                         number (if (clojure.core/nil? rj-utils-temp) number
+                                  rj-utils-temp)
+                         rj-utils-temp (/ number 2)
+                         number (if (clojure.core/nil? rj-utils-temp) number
+                                  rj-utils-temp)
+                         rj-utils-temp nil
+                         number (if (clojure.core/nil? rj-utils-temp) number
+                                  rj-utils-temp)]
+        number)
+      (provided
+        (gensym) => (symbol "rj-utils-temp")))
+
+(fact "as-?> evaluates correctly"
+      (as-?> number
+             nil
+             (+ 2 number)
+             nil
+             (/ number 2)
+             nil)
+      => 22
+
+      ;;Beware, changing type is not prevented
+      (as-?> pie
+             (+ pie 2)
+             ((roughly 5.14) pie)
+             (not pie))
+      => false)

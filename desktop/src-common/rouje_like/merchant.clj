@@ -5,6 +5,7 @@
             [rouje-like.entity-wrapper :as rj.e]
             [rouje-like.config :as rj.cfg]
             [rouje-like.items :as rj.i]
+            [rouje-like.portal :as rj.p]
             [rouje-like.utils :as rj.u :refer [?]]))
 
 (defn merchant-tile
@@ -45,7 +46,7 @@
         levels (:levels c-world)
         merch-level (nth levels 0)
         merch-item-pos rj.cfg/merchant-item-pos]
-    (map (fn [{x :x y :y}]
+    (map (fn [{:keys [x y]}]
            (get-in merch-level [x y]))
          merch-item-pos)))
 
@@ -54,7 +55,8 @@
   (let [target-tile (merchant-tile system)
         e-world (first (rj.e/all-e-with-c system :world))
         e-merchant (br.e/create-entity)
-        system (rj.u/update-in-world system e-world [(:z target-tile) (:x target-tile) (:y target-tile)]
+        system (rj.u/update-in-world system e-world
+                                     (rj.c/->3DPoint target-tile)
                                      (fn [entities]
                                        (vec
                                         (conj
@@ -70,3 +72,44 @@
 (defn init-merchant
   [system z]
   (add-merchant system))
+
+;;;; MERCHANT LEVEL CODE
+(defn add-merch-items
+  [system]
+  (reduce (fn [sys tile]
+            (:system (rj.i/add-purchasable sys tile)))
+          system
+          (merchant-item-tiles system)))
+
+(defn remove-merch-items
+  [system]
+  (reduce (fn [sys {:keys [x y]}]
+            (rj.i/remove-item sys [0 x y] :purchasable))
+          system rj.cfg/merchant-item-pos))
+
+(defn reset-merch-level
+  [system [z x y]]
+  (let [e-world (first (rj.e/all-e-with-c system :world))
+        {:keys [levels]} (rj.e/get-c-on-e system e-world :world)
+        level (nth levels z)
+        target-tile (get-in level [x y])]
+    (as-> system system
+          (remove-merch-items system)
+          (add-merch-items system)
+          (:system (rj.p/add-portal system (merchant-portal-tile system) target-tile :portal)))))
+
+(defn add-merch-portal
+  [system z]
+  (let [e-world (first (rj.e/all-e-with-c system :world))
+        c-world (rj.e/get-c-on-e system e-world :world)
+        levels (:levels c-world)
+        level (nth levels z)
+        merch-level (nth levels 0)
+        merch-player-tile (merchant-player-tile system)
+        get-rand-tile (fn [level]
+                        (get-in level [(rand-int (count level))
+                                       (rand-int (count (first level)))]))]
+    (loop [portal-tile (get-rand-tile level)]
+      (if (rj.cfg/<floors> (:type (rj.u/tile->top-entity portal-tile)))
+        (:system (rj.p/add-portal system portal-tile merch-player-tile :m-portal))
+        (recur (get-rand-tile level))))))

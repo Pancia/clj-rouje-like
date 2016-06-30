@@ -34,10 +34,14 @@
 (def <walls>
   #{:temple-wall
     :door :wall
-    :tree :maze-wall})
+    :tree})
 
 (def <indestructible-walls>
   #{:temple-wall :maze-wall})
+
+(def <indestructibles>
+  (union <indestructible-walls>
+         <floors>))
 
 (def <items>
   #{:torch :gold
@@ -51,7 +55,9 @@
   (union <floors> <items>))
 
 (def <sight-blockers>
-  (union <walls> #{:arrow-trap :lichen}))
+  (union <walls>
+         <indestructible-walls>
+         #{:arrow-trap :lichen}))
 
 (def <valid-move-targets>
   (union <empty> #{:portal
@@ -193,6 +199,7 @@
    :maze-wall       {:hp 100}
    :temple-wall     {:hp 100}
    :arrow-trap      {:hp 1
+                     :sight 4
                      :atk 2}
    :spike-trap      {:hp 1
                      :atk 2}
@@ -204,72 +211,85 @@
    :skeleton        {:hp 8
                      :def 1
                      :atk 3
+                     :sight 4
                      :exp 1}
    :snake           {:hp  2
                      :def 1
                      :atk 2
+                     :sight 4
                      :exp 1}
    :troll           {:hp  8
                      :def 2
                      :atk 4
+                     :sight 7
                      :exp 4}
    :mimic           {:hp 5
                      :def 2
                      :atk 3
+                     :sight 4
                      :exp 3}
    :spider          {:hp 2
                      :def 0
                      :atk 1
+                     :sight 3
                      :exp 1}
    :slime           {:hp 2
                      :def 0
                      :atk 1
+                     :sight 4
                      :exp 1}
    :drake           {:hp 6
                      :def 3
                      :atk 4
+                     :sight 5
                      :exp 5}
-   :necro           {:hp 6
+   :necromancer     {:hp 6
                      :def 3
                      :atk 4
+                     :sight 5
                      :exp 5}
    :colossal-amoeba {:hp 6
                      :def 1
                      :atk 3
+                     :sight 3
                      :exp 0
                      :split-rate 3}
    :giant-amoeba    {:hp 4
                      :def 1
                      :atk 2
+                     :sight 3
                      :exp 0
                      :split-rate 2}
    :large-amoeba    {:hp 2
                      :def 1
                      :atk 1
+                     :sight 3
                      :exp 2}
-   :willow-wisp       {:hp 3
+   :willow-wisp     {:hp 3
                      :def 0
                      :atk 0
+                     :sight 4
                      :exp 1}
    :hydra-head      {:hp 25
                      :def 3
                      :atk 5
+                     :sight 99
                      :exp 10}
    :hydra-neck      {:hp 20
                      :def 3
                      :atk 0
+                     :sight 99
                      :exp 0}
    :hydra-tail      {:hp 20
                      :def 1
                      :atk 0
+                     :sight 99
                      :exp 0}
    :hydra-rear      {:hp 20
                      :def 1
                      :atk 0
+                     :sight 99
                      :exp 0}})
-
-(def trap-types
-  [:arrow])
 
 (def potion-stats
   {:health 5
@@ -284,6 +304,8 @@
    :mp    1
    :eq    1})
 
+(def maze:wall->floor% 20)
+
 ;; ===== MONSTER CONFIG =====
 (def mob->init-spawn%
   {:willow-wisp     0.4;0.1
@@ -291,7 +313,7 @@
    :colossal-amoeba 1
    :bat             1
    :lichen          1
-   :necro           0.4;0.1
+   :necromancer     0.4;0.1
    :drake           0.4;0.01
    :slime           0.4;0.1
    :spider          0.4;0.5
@@ -302,12 +324,42 @@
    :skeleton        0.4;0.1
    })
 
+(def mob->stefs
+  {:colossal-amoeba [{:type :paralysis
+                      :duration 2
+                      :value 1}]
+   :drake        [{:type :burn
+                   :duration 6
+                   :value 3}]
+   :giant-amoeba [{:type :paralysis
+                   :duration 2
+                   :value 1}]
+   :lichen       [{:type :poison
+                   :duration 2
+                   :value 1}]
+   :necromancer [{:type :paralysis
+                  :duration 3
+                  :value 1}]
+   :slime [{:type :poison
+            :duration 3
+            :value 2}]
+   :snake [{:type :poison
+            :duration 4
+            :value 2}]
+   :spider [{:type :poison
+             :duration 5
+             :value 1}]
+   :willow-wisp [{:type :burn
+                  :duration 2
+                  :value 1}]
+   })
+
 ;; ===== STARTING FLOOR FOR MOBS =====
 (def mob->init-floor
   {:skeleton      1;2
    :willow-wisp   1;3
    :giant-amoeba  1;5
-   :necro         1;6
+   :necromancer   1;6
    :drake         1;8
    :slime         1;3
    :spider        1

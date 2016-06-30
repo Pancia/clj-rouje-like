@@ -32,7 +32,8 @@
           dig-fn      :- Fn])
 
 (s/defrecord ^:always-validate
-  Energy [energy :- s/Num]
+  Energy [energy         :- s/Num
+          default-energy :- s/Num]
   ISaveState
   (->save-state [this]
     (zipmap (keys this) (vals this))))
@@ -162,7 +163,12 @@
 (s/defrecord ^:always-validate
   Portal [x :- s/Num
           y :- s/Num
-          z :- s/Num])
+          z :- s/Num]
+  IPoint
+  (->3DPoint [this]
+    [z x y])
+  (->2DPoint [this]
+    [x y]))
 
 (s/defrecord ^:always-validate
   Position [x    :- s/Num
@@ -188,8 +194,8 @@
   Receiver [])
 
 (s/defrecord ^:always-validate
-  Relay [static   :- [s/Any]
-         blocking :- [s/Any]])
+  Relay [background :- [s/Any]
+         immediate  :- [s/Any]])
 
 (s/defrecord ^:always-validate
   Sight [distance :- s/Num])
@@ -302,8 +308,9 @@
 
 (defprotocol ITickable
   (tick [this e-this system]))
-(s/defrecord ^:always-validate
+(s/defrecord
   Tickable [tick-fn :- Fn
+            extra-tick-fn :- (s/maybe Fn)
             pri     :- s/Num]
   ITickable
   (tick     [this e-this system]

@@ -3,8 +3,10 @@
 
             [rouje-like.attacker :as rj.atk]
             [rouje-like.entity-wrapper :as rj.e]
-            [rouje-like.components :as rj.c :refer [can-move? move
-                                                    can-attack? attack]]
+            [rouje-like.components :as rj.c
+             :refer [can-move? move
+                     can-attack? attack
+                     ->3DPoint]]
             [rouje-like.utils :as rj.u :refer [?]]
             [rouje-like.messaging :as rj.msg]
             [rouje-like.config :as rj.cfg]))
@@ -32,7 +34,7 @@
    (let [e-world (first (rj.e/all-e-with-c system :world))
          e-trap (br.e/create-entity)
          system (rj.u/update-in-world system e-world
-                                      [(:z target-tile) (:x target-tile) (:y target-tile)]
+                                      (->3DPoint target-tile)
                                       (fn [entities]
                                         (vec
                                           (conj
@@ -55,21 +57,22 @@
                       :y    (:y target-tile)
                       :z    (:z target-tile)
                       :type :arrow-trap}]
-          [:sight {:distance 4}]
+          [:sight {:distance (:sight (rj.cfg/entity->stats :arrow-trap))}]
           [:attacker {:atk              (:atk (rj.cfg/entity->stats :arrow-trap))
                       :can-attack?-fn   rj.atk/can-attack?
                       :attack-fn        rj.atk/attack
                       :status-effects   []
                       :is-valid-target? (partial #{:player})}]
           [:tickable {:tick-fn process-input-tick
+                      :extra-tick-fn nil
                       :pri 0}]
           [:broadcaster {:name-fn (constantly (str "the "
                                                    (name :arrow-trap)))}]]))))
 
 (defn process-input-tick
   [_ e-this system]
-  (let [c-position (rj.e/get-c-on-e system e-this :position)
-        this-pos [(:x c-position) (:y c-position)]
+  (let [{:keys [x y z]} (rj.e/get-c-on-e system e-this :position)
+        this-pos [x y]
         c-mobile (rj.e/get-c-on-e system e-this :mobile)
 
         e-player (first (rj.e/all-e-with-c system :player))
@@ -79,7 +82,7 @@
         e-world (first (rj.e/all-e-with-c system :world))
         c-world (rj.e/get-c-on-e system e-world :world)
         levels (:levels c-world)
-        level (nth levels (:z c-position))
+        level (nth levels z)
 
         c-sight (rj.e/get-c-on-e system e-this :sight)
         c-attacker (rj.e/get-c-on-e system e-this :attacker)
@@ -116,11 +119,10 @@
           (as-> (rj.e/upd-c system e-this :arrow-trap
                             (fn [c-arrow-trap]
                               (assoc c-arrow-trap :ready? true))) system
-            (rj.msg/add-msg system :static
+            (rj.msg/add-msg system
                             (format "%s hears a ticking noise"
                                     (let [player-c-broadcaster (rj.e/get-c-on-e system e-target :broadcaster)]
                                       ((:name-fn player-c-broadcaster) system e-target)))))))
       (rj.e/upd-c system e-this :arrow-trap
                   (fn [c-arrow-trap]
                     (assoc c-arrow-trap :ready? false))))))
-

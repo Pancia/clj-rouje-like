@@ -3,8 +3,10 @@
 
             [rouje-like.attacker :as rj.atk]
             [rouje-like.entity-wrapper :as rj.e]
-            [rouje-like.components :as rj.c :refer [can-move? move
-                                                    can-attack? attack]]
+            [rouje-like.components :as rj.c
+             :refer [can-move? move
+                     can-attack? attack
+                     ->3DPoint ->2DPoint]]
             [rouje-like.utils :as rj.u :refer [?]]
             [rouje-like.messaging :as rj.msg]
             [rouje-like.config :as rj.cfg]))
@@ -32,7 +34,7 @@
    (let [e-world (first (rj.e/all-e-with-c system :world))
          e-trap (br.e/create-entity)
          system (rj.u/update-in-world system e-world
-                                      [(:z target-tile) (:x target-tile) (:y target-tile)]
+                                      (->3DPoint target-tile)
                                       (fn [entities]
                                         (vec
                                           (conj
@@ -56,20 +58,21 @@
                       :status-effects   []
                       :is-valid-target? (partial #{:player})}]
           [:tickable {:tick-fn process-input-tick
+                      :extra-tick-fn nil
                       :pri 0}]
           [:broadcaster {:name-fn (constantly (str "the "
                                                    (name :spike-trap)))}]])))
 
 (defn process-input-tick
   [_ e-this system]
-  (let [c-position (rj.e/get-c-on-e system e-this :position)
-        this-pos [(:x c-position) (:y c-position)]
+  (let [{:keys [x y z]} (rj.e/get-c-on-e system e-this :position)
+        this-pos [x y]
         c-mobile (rj.e/get-c-on-e system e-this :mobile)
 
         e-world (first (rj.e/all-e-with-c system :world))
         c-world (rj.e/get-c-on-e system e-world :world)
         levels (:levels c-world)
-        level (nth levels (:z c-position))
+        level (nth levels z)
 
         c-attacker (rj.e/get-c-on-e system e-this :attacker)
 
@@ -78,14 +81,14 @@
         player-is-adj? (seq (rj.u/get-neighbors-of-type level this-pos [:player]))]
     (as-> system system
       (if player-is-adj?
-        (rj.msg/add-msg system :static
+        (rj.msg/add-msg system
                         (format "%s hears a shuffling noise"
                                 (let [e-player (first (rj.e/all-e-with-c system :player))
                                       player-c-broadcaster (rj.e/get-c-on-e system e-player :broadcaster)]
                                   ((:name-fn player-c-broadcaster) system e-player))))
         (let [e-player (first (rj.e/all-e-with-c system :player))
               c-player-pos (rj.e/get-c-on-e system e-player :position)
-              player-pos [(:x c-player-pos) (:y c-player-pos)]]
+              player-pos (->2DPoint c-player-pos)]
           (if (= this-pos player-pos)
             (as-> system system
               (cond
@@ -104,4 +107,3 @@
                       (fn [c-spike-trap]
                         (update-in c-spike-trap [:visible?] dec)))
           (rj.u/change-type system e-this :spike-trap :hidden-spike-trap))))))
-

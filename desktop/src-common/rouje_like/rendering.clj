@@ -12,7 +12,8 @@
 
             [clojure.math.numeric-tower :as math]
 
-            [rouje-like.components :refer [render]]
+            [rouje-like.components
+             :refer [render ->2DPoint ->3DPoint]]
 
             [rouje-like.utils :as rj.u :refer [?]]
             [rouje-like.equipment :as rj.eq]
@@ -35,23 +36,23 @@
 (defn render-messages
   [_ e-this _ system]
   (let [c-relay (rj.e/get-c-on-e system e-this :relay)
+        {backgrounds :background
+         immediates :immediate} c-relay
 
         e-counter (first (rj.e/all-e-with-c system :counter))
-        c-counter (rj.e/get-c-on-e system e-counter :counter)
-        current-turn (:turn c-counter)
+        {current-turn :turn} (rj.e/get-c-on-e system e-counter :counter)
 
-        statics (:static c-relay)
-        blocking (:blocking c-relay)
-        current-messages (concat
-                           (filter #(= (:turn %) (dec current-turn))
-                                   statics)
-                           blocking)
-        current-messages (mapcat #(str (:message %) ". \n")
-                                 current-messages)
+        msgs (concat
+               (filter #(= (:turn %)
+                           (dec current-turn))
+                       backgrounds)
+               immediates)
+        msgs (mapcat #(str (:message %) ". \n")
+                     msgs)
 
         renderer (new SpriteBatch)]
     (.begin renderer)
-    (label! (label (apply str (into [] current-messages))
+    (label! (label (apply str (into [] msgs))
                    (color :green)
                    :set-y (float 0))
             :draw renderer 1.0)
@@ -82,15 +83,20 @@
         y (:y c-position)
         z (:z c-position)
 
-        c-destructible (rj.e/get-c-on-e system e-this :destructible)
-        hp (:hp c-destructible)
-        def (:def c-destructible)
-        status-effects (:status-effects c-destructible)
-        max-hp (:max-hp c-destructible)
+        {:keys [hp max-hp def status-effects]} (rj.e/get-c-on-e system e-this :destructible)
+        status-effects (into []
+                             (map (fn [{:keys [type value duration]}]
+                                    {:type type
+                                     :value value
+                                     :duration duration})
+                                  status-effects))
 
         c-inv (rj.e/get-c-on-e system e-this :inventory)
-        junk (count (:junk c-inv))
-        slot (rj.eq/equipment-name (or (:weapon (:slot c-inv)) (:armor (:slot c-inv))))
+        junk (->> (:junk c-inv)
+                  (map rj.eq/equipment-value)
+                  (reduce + 0))
+        slot (rj.eq/equipment-name (or (:weapon (:slot c-inv))
+                                       (:armor (:slot c-inv))))
         hp-potions (:hp-potion c-inv)
         mp-potions (:mp-potion c-inv)
 
@@ -110,33 +116,38 @@
 
         renderer (new SpriteBatch)]
     (.begin renderer)
-    (label! (label (str "Name: " player-name
-                        " - Gold: [" gold "]"
-                        " - Position: [" x "," y "," z "]"
-                        " - HP: [" hp  "/" max-hp "]"
-                        " - MP: [" mp "/" max-mp "]"
-                        " - Attack: [" attack "]"
-                        " - Defense: [" def "]"
-                        " - Race: [" race "]"
-                        " - Class: [" class "]"
-                        "\nExperience: [" experience "]"
-                        " - Level: [" level "]"
-                        " - cli: " @rj.u/cli
-                        " - Status: " status-effects
-                        "\nEnergy: [" energy "]"
-                        " - Junk: [" junk "]"
-                        " - Slot: [" slot "]"
-                        " - Armor: [" armor "]"
-                        " - Weapon: [" weapon "]"
-                        " - HP-Potions: [" hp-potions "]"
-                        " - MP-Potions: [" mp-potions "]")
+    (label! (label (str "{"
+                        "Name: " player-name ", "
+                        "Gold: " gold ", "
+                        "Position: [" x "," y "," z "], "
+                        "HP: " hp  "/" max-hp ", "
+                        "MP: " mp "/" max-mp
+                        "}\n{"
+                        "Attack: " attack ", "
+                        "Defense: " def ", "
+                        "Race: " race ", "
+                        "Class: " class
+                        "}\n{"
+                        "Experience: " experience ", "
+                        "Level: " level ", "
+                        "cli: " @rj.u/cmdl-buffer
+                        "}\n{"
+                        "Status: " status-effects
+                        "}\n{"
+                        "Energy: " energy ", "
+                        "Junk: " junk ", "
+                        "Slot: [" slot "], "
+                        "Armor: [" armor "], "
+                        "Weapon: [" weapon "], "
+                        "HP-Potions: " hp-potions ", "
+                        "MP-Potions: " mp-potions
+                        "}")
 
                    (color :green)
                    :set-y (float (* (+ vheight
                                        (- (+ (:top rj.cfg/padding-sizes)
                                              (:btm rj.cfg/padding-sizes))
-                                          2))
-
+                                          3))
                                     (rj.cfg/block-size))))
             :draw renderer 1.0)
     (.end renderer)))
@@ -197,7 +208,7 @@
                                  :width 12 :height 12
                                  :color {:r 255 :g 0 :b 0 :a 255}
                                  :tile-sheet grim-tile-sheet}
-     :hidden-mimic              {:x 1 :y 9
+     :mimic                     {:x 1 :y 9
                                  :width 12 :height 12
                                  :color {:r 128 :g 255 :b 1 :a 255}
                                  :tile-sheet grim-tile-sheet}
@@ -245,7 +256,7 @@
                                  :width 12 :height 12
                                  :color {:r 0 :g 0 :b 255 :a 255}
                                  :tile-sheet grim-tile-sheet}
-     :mimic                     {:x 15 :y 8
+     :visible-mimic             {:x 15 :y 8
                                  :width 12 :height 12
                                  :color {:r 255 :g 241 :b 36 :a 255}
                                  :tile-sheet grim-tile-sheet}
@@ -330,9 +341,9 @@
   [_ e-this {:keys [view-port-sizes]} system]
   (let [e-player (first (rj.e/all-e-with-c system :player))
 
-        c-player-pos (rj.e/get-c-on-e system e-player :position)
-        player-pos [(:x c-player-pos)
-                    (:y c-player-pos)]
+        {:keys [x y]
+         :as c-player-pos} (rj.e/get-c-on-e system e-player :position)
+        player-pos (->2DPoint c-player-pos)
         fog-of-war? (:fog-of-war? (rj.e/get-c-on-e system e-player :player))
 
         c-sight (rj.e/get-c-on-e system e-player :playersight)
@@ -344,10 +355,8 @@
 
         [vp-size-x vp-size-y] view-port-sizes
 
-        start-x (max 0 (- (:x c-player-pos)
-                          (int (/ vp-size-x 2))))
-        start-y (max 0 (- (:y c-player-pos)
-                          (int (/ vp-size-y 2))))
+        start-x (max 0 (- x (int (/ vp-size-x 2))))
+        start-y (max 0 (- y (int (/ vp-size-y 2))))
 
         end-x (+ start-x vp-size-x)
         end-x (min end-x (count world))
@@ -371,11 +380,12 @@
           (let [color-values (:color texture-entity)
                 color-values (update-in color-values [:a]
                                         (fn [alpha]
-                                          (if-let [c-destr (rj.e/get-c-on-e system (:id top-entity) :destructible)]
+                                          (if-let [c-destr (rj.e/get-c-on-e system (:id top-entity)
+                                                                            :destructible)]
                                             (let [hp (:hp c-destr)
                                                   max-hp (:max-hp c-destr)]
                                               (max 75 (* (/ hp max-hp) alpha)))
-                                           alpha)))]
+                                            alpha)))]
             (.setColor renderer
                        (Color. (float (/ (:r color-values) 255))
                                (float (/ (:g color-values) 255))

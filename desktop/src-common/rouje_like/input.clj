@@ -23,37 +23,58 @@
 
 (def input-manager (atom {}))
 
-(defn reset-input-manager
+(defn reset-input-manager!
   []
-  (swap! input-manager
-         (reduce-kv (fn [m k v] (assoc m k nil)) {} @input-manager)))
+  (reset! input-manager {}))
 
-(defn set-input-state
+(defn set-input-manager!
   [mode]
-  (swap! input-manager assoc mode true))
+  (swap! input-manager
+         assoc mode true))
 
 (defn tick-entities
   [system]
   {:pre [(not (nil? system))]}
-  (let [entities (rj.e/all-e-with-c system :tickable)
-        e-player (first (rj.e/all-e-with-c system :player))
-        c-position (rj.e/get-c-on-e system e-player :position)
-        z (:z c-position)
-        entities (filter #(if-let [c-position (rj.e/get-c-on-e system % :position)]
-                            (= z (:z c-position))
-                            true) ;(This is for the relay and the counter)
-                         entities)
-        entities (reverse (sort-by (fn [e]
-                                     (:pri (rj.e/get-c-on-e system e :tickable)))
-                                   entities)) #_(SORT in decreasing order)]
-    (reduce (fn [system entity]
-              (let [c-tickable (rj.e/get-c-on-e system entity :tickable)]
-                (tick c-tickable entity system)))
-            system entities)))
+  (as-> system system
+    ;;tick every entity, with those with a higher :pri going first
+    (let [entities (rj.e/all-e-with-c system :tickable)
+          e-player (first (rj.e/all-e-with-c system :player))
+          c-position (rj.e/get-c-on-e system e-player :position)
+          z (:z c-position)
+          entities (filter #(if-let [c-position (rj.e/get-c-on-e system % :position)]
+                              (= z (:z c-position))
+                              true) ;;This is for the relay and the counter
+                           entities)
+          entities (reverse
+                     (sort-by #(:pri (rj.e/get-c-on-e system % :tickable))
+                              entities))]
+      (reduce (fn [system entity]
+                (let [c-tickable (rj.e/get-c-on-e system entity :tickable)]
+                  (tick c-tickable entity system)))
+              system entities))
+    ;;reset all entities with energy that have less than they should
+    ;;which is either their default-energy or 1
+    ;;UNLESS it has negative energy, which indicates paralysis
+    (let [energetic-entities (rj.e/all-e-with-c system :energy)]
+      (reduce (fn [system entity]
+                (rj.e/upd-c system entity :energy
+                            (fn [{:keys [default-energy]
+                                  :or {default-energy 1}
+                                  :as c-energy}]
+                              (update-in c-energy [:energy]
+                                         #(cond
+                                            (neg? %) 0
 
-;Temporary, will eventually be used to execute cmdl actions
+                                            (< % default-energy)
+                                            default-energy
+
+                                            :else %)))))
+              system energetic-entities))))
+
 (defn cmds->action
   [system cmds]
+  ;;TODO: Either remove "race|class" cmds
+  ;;  or make them debug & actually affect player stats
   (let [cmd->action {"race" (fn [system r]
                               (let [e-player (first (rj.e/all-e-with-c system :player))]
                                 (rj.e/upd-c system e-player :race
@@ -75,57 +96,63 @@
         arg (second cmd&arg)]
     (action system arg)))
 
-(def keycode->cli-action
+(def keycode->cmdl-action
   (let
-    [k->cli-fn (fn [k] (fn [system] (swap! rj.u/cli str (name k)) system))
+    [k->cmdl-fn (fn [k] (fn [system]
+                          (swap! rj.u/cmdl-buffer
+                                 str (name k))
+                          system))
      key-codes (range 29 55) ;[a-z]
      alphabet [:a :b :c :d :e :f :g :h :i :j :k :l :m
                :n :o :p :q :r :s :t :u :v :w :x :y :z]]
     (merge {(play/key-code :escape)    (fn [system]
-                                         (reset! rj.u/cli? false)
-                                         (reset! rj.u/cli "")
+                                         (reset-input-manager!)
+                                         (reset! rj.u/cmdl-buffer "")
                                          system)
             (play/key-code :backspace) (fn [system]
-                                         (swap! rj.u/cli #(apply str (drop-last 1 %)))
+                                         (swap! rj.u/cmdl-buffer #(apply str (drop-last 1 %)))
                                          system)
             (play/key-code :enter)     (fn [system]
-                                         (let [cli @rj.u/cli]
-                                           (reset! rj.u/cli? false)
-                                           (reset! rj.u/cli "")
-                                           (cmds->action system cli)))
-            (play/key-code :space)     (fn [system] (swap! rj.u/cli str " ") system)}
-           (zipmap key-codes (map k->cli-fn alphabet)))))
+                                         (let [cmds @rj.u/cmdl-buffer]
+                                           (reset-input-manager!)
+                                           (reset! rj.u/cmdl-buffer "")
+                                           (cmds->action system cmds)))
+            (play/key-code :space)     (fn [system] (swap! rj.u/cmdl-buffer str " ") system)}
+           (zipmap key-codes (map k->cmdl-fn alphabet)))))
 
 (def keycode->action
   {(play/key-code :semicolon)     (fn [system]
-                                    (reset! rj.u/cli? true)
+                                    (set-input-manager! :cmdl-mode?)
                                     system)
    (play/key-code :F)             (fn [system]
-                                    (rj.e/upd-c system (first (rj.e/all-e-with-c system :player))
-                                                :player (fn [c-player]
-                                                          (update-in c-player [:fog-of-war?]
-                                                                     (fn [prev]
-                                                                       (not prev))))))
+                                    (let [e-player (first (rj.e/all-e-with-c system :player))]
+                                      (rj.e/upd-c system e-player
+                                                  :player (fn [c-player]
+                                                            (update-in c-player [:fog-of-war?]
+                                                                       not)))))
    (play/key-code :E)             (fn [system]
                                     (let [e-player (first (rj.e/all-e-with-c system :player))]
                                       (rj.inv/equip-slot-item system e-player)))
    (play/key-code :num-1)         (fn [system]
-                                    (reset-input-manager)
-                                    (set-input-state :spell-mode)
+                                    (reset-input-manager!)
+                                    (set-input-manager! :spell-mode?)
                                     system)
 
    (play/key-code :enter)         (fn [system]
                                     (tick-entities system))
-   (play/key-code :I)             (fn [system]
-                                    (reset-input-manager)
-                                    (set-input-state :inspect-mode)
-                                    system)
+   (play/key-code :X)             (fn [system]
+                                    (reset-input-manager!)
+                                    (set-input-manager! :inspect-mode?)
+                                    (rj.msg/add-msg! system
+                                      "Inspecting... Please choose a direction."))
    (play/key-code :H)             (fn [system]
-                                    (-> (rj.item/use-hp-potion system (first (rj.e/all-e-with-c system :player)))
-                                        (tick-entities)))
+                                    (let [e-player (first (rj.e/all-e-with-c system :player))]
+                                      (-> (rj.item/use-hp-potion system e-player)
+                                          (tick-entities))))
    (play/key-code :M)             (fn [system]
-                                    (-> (rj.item/use-mp-potion system (first (rj.e/all-e-with-c system :player)))
-                                        (tick-entities)))})
+                                    (let [e-player (first (rj.e/all-e-with-c system :player))]
+                                      (-> (rj.item/use-mp-potion system e-player)
+                                          (tick-entities))))})
 
 (def keycode->direction
   {(play/key-code :W)          :up
@@ -144,117 +171,73 @@
    (play/key-code :dpad-right) :right
    (play/key-code :L)          :right})
 
+(defn inspect
+  [system direction]
+  (let [e-player (first (rj.e/all-e-with-c system :player))
+        e-world (first (rj.e/all-e-with-c system :world))
+        {:keys [levels]} (rj.e/get-c-on-e system e-world :world)
+        {:keys [x y z]} (rj.e/get-c-on-e system e-player :position)
+        player-pos [x y]
+
+        level (nth levels z)
+        target-pos (rj.u/coords+offset player-pos (rj.u/direction->offset direction))
+        target-tile (get-in level target-pos)
+
+        {target-id :id} (rj.u/tile->top-entity target-tile)]
+    (if-let [c-inspectable (rj.e/get-c-on-e system target-id :inspectable)]
+      (let [{:keys [msg]} c-inspectable]
+        (-> (rj.msg/clear-messages! system)
+            (rj.msg/add-msg! msg)))
+      (let [{:keys [type]
+             :or {type "nothing"}} (rj.e/get-c-on-e system target-id :position)
+            msg (str "Found " type)]
+        (-> (rj.msg/clear-messages! system)
+            (rj.msg/add-msg! msg))))))
+
 (defn process-keyboard-input
   [system keycode]
-  (if @rj.u/cli?
-    (let [cli-action (keycode->cli-action keycode)]
-      (if (not (nil? cli-action))
-        (cli-action system)
-        system))
-    (let [action (keycode->action keycode)]
-      (if (not (nil? action))
-        (action system)
-        (let [e-this (first (rj.e/all-e-with-c system :player))
-              c-energy (rj.e/get-c-on-e system e-this :energy)
-              energy (:energy c-energy)
-              direction (keycode->direction keycode)]
-          (if (not (nil? direction))
-            (cond
-             ;; are we casting a spell
-             (:spell-mode @input-manager)
-             (let [e-player (first (rj.e/all-e-with-c system :player))
-                   c-magic (rj.e/get-c-on-e system e-player :magic)
-                   spells (:spells c-magic)
-                   fireball (first (filter #(= (:name %) :fireball) spells))
-                   powerattack (first (filter #(= (:name %) :powerattack) spells))
-                   pickpocket (first (filter #(= (:name %) :pickpocket) spells))
-                   mp (:mp c-magic)]
-               (reset-input-manager)
-               (cond
-                 fireball
-                 (if (not (neg? (- mp (:fireball rj.cfg/spell->mp-cost))))
-                   (as-> system system
-                     (rj.mag/use-fireball system e-player fireball direction)
-                     (tick-entities system)
-                     (rj.d/apply-effects system e-player))
-                   (as-> system system
-                     (rj.msg/add-msg system :static "you do not have enough mp to cast fireball")
-                     (tick-entities system)))
+  (let [direction (keycode->direction keycode)
+        action (keycode->action keycode)]
+    (cond
+      (:cmdl-mode? @input-manager)
+      (if-let [cmdl-action (keycode->cmdl-action keycode)]
+        (cmdl-action system)
+        system)
 
-                 powerattack
-                 (if (not (neg? (- mp (:powerattack rj.cfg/spell->mp-cost))))
-                   (as-> system system
-                     (rj.mag/use-powerattack system e-player powerattack direction)
-                     (tick-entities system)
-                     (rj.d/apply-effects system e-player))
-                   (as-> system system
-                     (rj.msg/add-msg system :static "you do not have enough mp to cast power attack")
-                     (tick-entities system)))
+      action
+      (action system)
 
-                 pickpocket
-                 (if (not (neg? (- mp (:pickpocket rj.cfg/spell->mp-cost))))
-                   (as-> system system
-                     (rj.mag/use-pickpocket system e-player pickpocket direction)
-                     (tick-entities system)
-                     (rj.d/apply-effects system e-player))
-                   (as-> system system
-                     (rj.msg/add-msg system :static "you do not have enough mp to cast pickpocket")
-                     (tick-entities system)))
+      (:spell-mode? @input-manager)
+      (as-> system system
+        (do (reset-input-manager!) system)
+        (rj.mag/cast-spell system direction)
+        (tick-entities system))
 
-                 :else
-                 (as-> system system
-                           (rj.msg/add-msg system :static "you do not have a spell to cast")
-                           (tick-entities system))))
+      (:inspect-mode? @input-manager)
+      (as-> system system
+        (do (reset-input-manager!) system)
+        (inspect system direction))
 
-            ;; are we inspecting something
-             (:inspect-mode @input-manager)
-             (let [e-player (first (rj.e/all-e-with-c system :player))
-                   e-world (first (rj.e/all-e-with-c system :world))
-                   c-world (rj.e/get-c-on-e system e-world :world)
-                   levels (:levels c-world)
-                   c-pos (rj.e/get-c-on-e system e-player :position)
-                   player-pos [(:x c-pos) (:y c-pos)]
+      direction
+      (let [e-player (first (rj.e/all-e-with-c system :player))
+            {:keys [energy]} (rj.e/get-c-on-e system e-player :energy)]
+        (as-> system system
+          ;;If we have energy tick the player,
+          ;;otherwise we must have been paralyzed
+          (if (pos? energy)
+            (rj.pl/process-input-tick system direction)
+            (if-let [c-broadcaster (rj.e/get-c-on-e system e-player :broadcaster)]
+              (rj.msg/add-msg system
+                (format "%s was paralyzed, and couldn't move this turn"
+                        ((:name-fn c-broadcaster) system e-player)))
+              system))
+          ;;If we have more than 1 energy we should be able to go again
+          (if (<= 1 (:energy (rj.e/get-c-on-e system e-player :energy)))
+            system ;;ie: go again
+            (tick-entities system))))
 
-                   level (nth levels (:z c-pos))
-                   target-pos (rj.u/coords+offset player-pos (rj.u/direction->offset direction))
-                   target-entities (rj.u/entities-at-pos level target-pos)
-
-                   inspectable (first (filter rj.u/inspectable? target-entities))]
-               (reset-input-manager)
-               (if inspectable
-                 (let [c-inspectable (rj.e/get-c-on-e system (:id inspectable) :inspectable)
-                       msg (:msg c-inspectable)]
-                   (as-> system system
-                         (rj.msg/add-msg system :static msg)
-                         (tick-entities system)))
-                 (as-> system system
-                       (rj.msg/add-msg system :static "there is nothing to inspect there")
-                       (tick-entities system))))
-
-              ;; we must be moving
-             :else
-             (as-> system system
-                   (if (pos? energy)
-                     (rj.pl/process-input-tick system direction)
-                     (if-let [c-broadcaster (rj.e/get-c-on-e system e-this :broadcaster)]
-                       (rj.msg/add-msg system :static
-                                       (format "%s was paralyzed, and couldn't move this turn"
-                                               ((:name-fn c-broadcaster) system e-this)))
-                       system))
-                   (if (>= 1 (:energy (rj.e/get-c-on-e system e-this :energy)))
-                     (tick-entities system)
-                     system)
-                   (let [energetic-entities (rj.e/all-e-with-c system :energy)]
-                     (reduce (fn [system entity]
-                               (rj.e/upd-c system entity :energy
-                                           (fn [c-energy]
-                                             (update-in c-energy [:energy]
-                                                        (fn [energy]
-                                                          (if (< energy 1)
-                                                            (inc energy)
-                                                            energy))))))
-                             system energetic-entities))))
-            system))))))
+      :else
+      system)))
 
 (defn process-fling-input
   [system x-vel y-vel]

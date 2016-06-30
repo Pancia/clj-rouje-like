@@ -6,10 +6,12 @@
             [rouje-like.entity-wrapper :as rj.e
              :refer [>?system]]
             [rouje-like.config :as rj.cfg]
-            [rouje-like.components :as rj.c])
+            [rouje-like.components :as rj.c
+             :refer [->2DPoint ->3DPoint]])
   (:import [rouje_like.components Entity Tile]
            [clojure.lang Fn]
-           [java.util UUID]))
+           [java.util UUID]
+           [java.text SimpleDateFormat]))
 
 #_(in-ns 'rouje-like.utils)
 #_(use 'rouje-like.utils :reload)
@@ -18,9 +20,10 @@
   ([x]
    (let [line (:line (meta &form))
          file *file*]
-     `(let [x#   ~x]
+     `(let [x#   ~x
+            sdf# (new SimpleDateFormat "HH:mm:ss.SSS")]
         (println (str (str "#" "RJ" " ")
-                      "@[" (apply str (drop 5 (str (System/currentTimeMillis))))
+                      "@[" (apply str (. sdf# format (System/currentTimeMillis)))
                       ", " ~file ":" ~line "]:\n"
                       "\t" (pr-str '~x) "=" (pr-str x#) "\n"))
         x#)))
@@ -28,17 +31,26 @@
    (let [line (:line (meta &form))
          file *file*]
      `(let [x#   ~x
-            tag# ~tag]
+            tag# ~tag
+            sdf# (new SimpleDateFormat "HH:mm:ss.SSS")]
         (println (str (str "#" tag# " ")
-                      "@[" (apply str (drop 5 (str (System/currentTimeMillis))))
+                      "@[" (apply str (. sdf# format (System/currentTimeMillis)))
                       ", " ~file ":" ~line "]:\n"
                       "\t" (pr-str '~x) "=" (pr-str x#) "\n"))
         x#))))
 
-(def cli (atom ""))
-(def cli? (atom false))
+(defmacro as-?>
+  [expr & forms]
+  (let [temp (gensym)]
+    `(let [~@(interleave
+               (cycle [temp expr])
+               (interleave forms
+                           (repeat `(if (nil? ~temp) ~expr ~temp))))]
+       ~expr)))
 
-(def -get-pri-
+(def cmdl-buffer (atom ""))
+
+(def >?get-pri
   {s/Keyword s/Num})
 (def get-default-pri
   {:floor 0
@@ -62,7 +74,7 @@
 (s/defn ^{:private true
           :always-validate true} sort-by-type
   [entities :- [Entity]
-   get-pri :- -get-pri-]
+   get-pri :- >?get-pri]
   (sort (fn [arg1 arg2]
           (let [t1 (:type arg1)
                 t2 (:type arg2)]
@@ -79,7 +91,7 @@
   ([target-tile :- (s/maybe Tile)]
    (tile->top-entity target-tile get-default-pri))
   ([target-tile :- (s/maybe Tile)
-    get-pri :- -get-pri-]
+    get-pri :- >?get-pri]
    (-> target-tile
        (:entities)
        (sort-by-type get-pri)
@@ -142,19 +154,18 @@
    sight :- s/Num
    XY :- (s/both >?2DVec [s/Num])
    IJ :- (s/both >?2DVec [s/Num])]
-  (let [result (if (< sight
-                      (taxicab-dist XY IJ))
-                 false
-                 (as-> (points->line XY IJ) line
-                   (filter (fn [[x y]]
-                             (-> (get-in level XY)
-                                 (tile->top-entity)
-                                 (:type)
-                                 (rj.cfg/<sight-blockers>)))
-                           line)
-                   (every? (partial = IJ)
-                           line)))]
-    result))
+  (if (< sight
+         (taxicab-dist XY IJ))
+    false
+    (as-> (points->line XY IJ) line
+      (filter (fn [[x y]]
+                (-> (get-in level [x y])
+                    (tile->top-entity)
+                    (:type)
+                    (rj.cfg/<sight-blockers>)))
+              line)
+      (every? (partial = IJ)
+              line))))
 
 (def direction->offset
   {:left  [-1 0]
@@ -169,7 +180,8 @@
   [XY   :- >?2DVec
    DXDY :- >?2DVec]
   (let [[x  y]  XY
-        [dx dy] DXDY] [(+ x dx) (+ y dy)]))
+        [dx dy] DXDY]
+    [(+ x dx) (+ y dy)]))
 
 (s/defn ^:always-validate
   get-neighbors-coords
@@ -270,7 +282,9 @@
   rand-rng
   [start :- s/Num
    end   :- s/Num]
-  (+ (rand-int (- (inc end) start)) start))
+  (+ (rand-int (- (inc end)
+                  start))
+     start))
 
 (s/defn ^:always-validate
   update-in-world
@@ -296,7 +310,7 @@
    new-type :- s/Keyword]
   (let [e-world (first (rj.e/all-e-with-c system :world))
         c-position (rj.e/get-c-on-e system e-this :position)
-        this-pos [(:z c-position) (:x c-position) (:y c-position)]]
+        this-pos (->3DPoint c-position)]
     (as-> system system
       (update-in-world system e-world this-pos
                        (fn [entities]
@@ -315,9 +329,9 @@
    value  :- s/Num]
   "Update the amount of gold on E-THIS by VALUE."
   (rj.e/upd-c system e-this :wallet
-                          (fn [c-wallet]
-                            (update-in c-wallet [:gold]
-                                       (partial + value)))))
+              (fn [c-wallet]
+                (update-in c-wallet [:gold]
+                           (partial + value)))))
 
 (s/defn ^:always-validate
   inspectable?
@@ -325,11 +339,53 @@
   (let [type (:type entity)]
     (some #(= type %) rj.cfg/inspectables)))
 
+(def >?levels
+  (s/pred #(= (rj.c/get-type :tile)
+                (type (first (first (first %)))))
+            '>?levels))
 (s/defn ^:always-validate
   entities-at-pos
-  [level :- >?level
-   pos   :- >?2DVec]
+  [levels :- >?levels
+   pos    :- >?3DVec]
   "Return the entities of the tile at [Z X Y]."
-  (let [target-tile (get-in level pos :err)]
+  (let [target-tile (get-in levels pos :err)]
     (assert (not= :err target-tile))
     (:entities target-tile)))
+
+(s/defn ^:always-validate
+  get-closest-tile-to
+  [level :- >?level
+   this-pos :- (s/both >?2DVec [s/Num])
+   target-tile :- Tile]
+  (let [target-pos (->2DPoint target-tile)
+        dist-from-target (taxicab-dist this-pos target-pos)
+
+        this-pos+dir-offset (fn [this-pos dir]
+                              (coords+offset this-pos (direction->offset dir)))
+        shuffled-directions (shuffle [:up :down :left :right])
+        offset-shuffled-directions (map #(this-pos+dir-offset this-pos %)
+                                        shuffled-directions)
+
+        is-valid-target-tile? rj.cfg/<valid-mob-targets>
+
+        nth->offset-pos (fn [index]
+                          (nth offset-shuffled-directions index))
+        isa-closer-tile? (fn [target-pos+offset]
+                           (and (< (taxicab-dist target-pos+offset target-pos)
+                                   dist-from-target)
+                                (is-valid-target-tile?
+                                  (:type (tile->top-entity (get-in level target-pos+offset))))))]
+    (cond
+      (isa-closer-tile? (nth->offset-pos 0))
+      (get-in level (nth->offset-pos 0))
+
+      (isa-closer-tile? (nth->offset-pos 1))
+      (get-in level (nth->offset-pos 1))
+
+      (isa-closer-tile? (nth->offset-pos 2))
+      (get-in level (nth->offset-pos 2))
+
+      (isa-closer-tile? (nth->offset-pos 3))
+      (get-in level (nth->offset-pos 3))
+
+      :else nil)))

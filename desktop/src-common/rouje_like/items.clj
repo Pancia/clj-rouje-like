@@ -1,7 +1,8 @@
 (ns rouje-like.items
   (:require [brute.entity :as br.e]
             [rouje-like.utils :as rj.u :refer [? update-gold]]
-            [rouje-like.components :as rj.c]
+            [rouje-like.components :as rj.c
+             :refer [->3DPoint]]
             [rouje-like.entity-wrapper :as rj.e]
             [rouje-like.equipment :as rj.eq]
             [rouje-like.inventory :as rj.inv]
@@ -14,16 +15,16 @@
     (rj.u/update-in-world system e-world pos
                           (fn [entities]
                             (vec
-                             (remove
-                              #(#{type} (:type %))
-                              entities))))))
+                              (remove
+                                #(#{type} (:type %))
+                                entities))))))
 
 (defn pickup-item
   [system e-by e-this [z x y] item-type]
   (let [broadcast-pickup
         (fn [system]
           (let [c-broadcaster (rj.e/get-c-on-e system e-this :broadcaster)]
-            (rj.msg/add-msg system :static
+            (rj.msg/add-msg system
                             (format "%s picked up %s"
                                     (let [by-c-broadcaster (rj.e/get-c-on-e system e-by
                                                                             :broadcaster)]
@@ -85,14 +86,14 @@
                          (broadcast-pickup system))
                        ;; otherwise broadcast a message saying unable to purchase
                        (as-> system system
-                         (rj.msg/add-msg system :static "you do not have enough gold to purchase that"))))
+                         (rj.msg/add-msg system "you do not have enough gold to purchase that"))))
 
       :merchant (let [junk-value (rj.inv/junk-value system e-by)
                       c-inv (rj.e/get-c-on-e system e-by :inventory)
                       junk (:junk c-inv)
                       njunk (count junk)]
                   (as-> system system
-                    (rj.msg/add-msg system :static (format "you sold %d pieces of junk for %d gold"
+                    (rj.msg/add-msg system (format "you sold %d pieces of junk for %d gold"
                                                            njunk junk-value))
                     (rj.inv/sell-junk system e-by)))
 
@@ -108,20 +109,20 @@
         potion-count (:hp-potion c-inv)]
     (if (> potion-count 0)
       (as-> system system
-            (if (> max-hp (+ hp hp-potion-val))
-              (rj.e/upd-c system e-by :destructible
-                          (fn [c-destructible]
-                            (update-in c-destructible [:hp]
-                                       (partial + hp-potion-val))))
-              (rj.e/upd-c system e-by :destructible
-                          (fn [c-destructible]
-                            (update-in c-destructible [:hp]
-                                       (constantly max-hp)))))
-            (rj.e/upd-c system e-by :inventory
-                        (fn [c-inventory]
-                          (update-in c-inventory [:hp-potion] dec))))
-       (as-> (rj.msg/add-msg system :static
-                        (format "You do not have any health potions to drink")) system
+        (if (> max-hp (+ hp hp-potion-val))
+          (rj.e/upd-c system e-by :destructible
+                      (fn [c-destructible]
+                        (update-in c-destructible [:hp]
+                                   (partial + hp-potion-val))))
+          (rj.e/upd-c system e-by :destructible
+                      (fn [c-destructible]
+                        (update-in c-destructible [:hp]
+                                   (constantly max-hp)))))
+        (rj.e/upd-c system e-by :inventory
+                    (fn [c-inventory]
+                      (update-in c-inventory [:hp-potion] dec))))
+      (as-> (rj.msg/add-msg system
+                            (format "You do not have any health potions to drink")) system
         system))))
 
 (defn use-mp-potion
@@ -134,21 +135,21 @@
         potion-count (:mp-potion c-inv)]
     (if (> potion-count 0)
       (as-> system system
-            (if (> max-mp (+ mp mp-potion-val))
-              (rj.e/upd-c system e-by :magic
-                          (fn [c-magic]
-                            (update-in c-magic [:mp]
-                                       (partial + mp-potion-val))))
-              (rj.e/upd-c system e-by :magic
-                          (fn [c-magic]
-                            (update-in c-magic [:mp]
-                                       (constantly max-mp)))))
-            (rj.e/upd-c system e-by :inventory
-                        (fn [c-inventory]
-                          (update-in c-inventory [:mp-potion] dec))))
-      (as-> (rj.msg/add-msg system :static
+        (if (> max-mp (+ mp mp-potion-val))
+          (rj.e/upd-c system e-by :magic
+                      (fn [c-magic]
+                        (update-in c-magic [:mp]
+                                   (partial + mp-potion-val))))
+          (rj.e/upd-c system e-by :magic
+                      (fn [c-magic]
+                        (update-in c-magic [:mp]
+                                   (constantly max-mp)))))
+        (rj.e/upd-c system e-by :inventory
+                    (fn [c-inventory]
+                      (update-in c-inventory [:mp-potion] dec))))
+      (as-> (rj.msg/add-msg system
                             (format "You do not have any mana potions to drink")) system
-            system))))
+        system))))
 
 (defn item>>world
   [system is-valid-tile? z item>>entities]
@@ -196,7 +197,7 @@
                                 (only-floor? tile))))
 
         health-potion>>entities (fn [entities]
-                          (item>>entities entities e-potion :health-potion))
+                                  (item>>entities entities e-potion :health-potion))
         system (item>>world system is-valid-tile? z
                             health-potion>>entities)]
     {:system (rj.e/system<<components
@@ -281,7 +282,8 @@
         item-type (:type item)
         !item-type ({:weapon :armor
                      :armor  :weapon} item-type)
-        system (rj.u/update-in-world system e-world [(:z target-tile) (:x target-tile) (:y target-tile)]
+        system (rj.u/update-in-world system e-world
+                                     (->3DPoint target-tile)
                                      (fn [entities]
                                        (vec
                                          (conj
@@ -289,18 +291,18 @@
                                            (rj.c/map->Entity {:id   e-purchasable
                                                               :type :purchasable})))))]
     {:system (rj.e/system<<components
-              system e-purchasable
-              [[:item {:pickup-fn pickup-item}]
-               [:purchasable {:value (rj.eq/equipment-value item)}]
-               [:inspectable {:msg (format "you see a %s that costs %d gold"
-                                           (rj.eq/equipment-name item) (rj.eq/equipment-value item))}]
-               [:equipment {item-type item
-                            !item-type nil}]
-               [:broadcaster {:name-fn (fn [system e-this]
-                                         (let [value (:value (rj.e/get-c-on-e system e-this :purchasable))
-                                               c-eq (rj.e/get-c-on-e system e-this :equipment)
-                                               name (rj.eq/equipment-name (item-type c-eq))]
-                                           (str "a " name " for " value " gold")))}]])
+               system e-purchasable
+               [[:item {:pickup-fn pickup-item}]
+                [:purchasable {:value (rj.eq/equipment-value item)}]
+                [:inspectable {:msg (format "you see a %s that costs %d gold"
+                                            (rj.eq/equipment-name item) (rj.eq/equipment-value item))}]
+                [:equipment {item-type item
+                             !item-type nil}]
+                [:broadcaster {:name-fn (fn [system e-this]
+                                          (let [value (:value (rj.e/get-c-on-e system e-this :purchasable))
+                                                c-eq (rj.e/get-c-on-e system e-this :equipment)
+                                                name (rj.eq/equipment-name (item-type c-eq))]
+                                            (str "a " name " for " value " gold")))}]])
      :z (:z target-tile)}))
 
 (defn add-equipment
@@ -322,12 +324,12 @@
         system (item>>world system is-valid-tile? z
                             eq>>entities)]
     {:system (rj.e/system<<components
-              system e-eq
-              [[:item {:pickup-fn pickup-item}]
-               [:equipment {eq-type eq
-                            !eq-type nil}]
-               [:broadcaster {:name-fn
-                              (fn [system e-this]
-                                (let [eq-name (rj.eq/equipment-name (eq-type (rj.e/get-c-on-e system e-this :equipment)))]
-                                  (str "a " eq-name)))}]])
+               system e-eq
+               [[:item {:pickup-fn pickup-item}]
+                [:equipment {eq-type eq
+                             !eq-type nil}]
+                [:broadcaster {:name-fn
+                               (fn [system e-this]
+                                 (let [eq-name (rj.eq/equipment-name (eq-type (rj.e/get-c-on-e system e-this :equipment)))]
+                                   (str "a " eq-name)))}]])
      :z z}))
